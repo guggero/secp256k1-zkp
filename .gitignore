@@ -10,6 +10,7 @@ tests
 exhaustive_tests
 gen_context
 example_musig
+example_thresholdsig
 *.exe
 *.so
 *.a
