@@ -43,9 +43,12 @@ int sign(const secp256k1_context* ctx, unsigned char seckeys[][32], const secp25
     const unsigned char *nonce_commitment_ptr[N_SIGNERS];
     secp256k1_musig_session_signer_data signer_data[N_SIGNERS][N_SIGNERS];
     secp256k1_pubkey nonce[N_SIGNERS];
-    int i, j;
+    unsigned int i, j;
     secp256k1_musig_partial_signature partial_sig[N_SIGNERS];
+    unsigned char pkser[33];
+    size_t pkserlen = sizeof(pkser);
 
+    printf("\"sessionIds\": [\n");
     for (i = 0; i < N_SIGNERS; i++) {
         FILE *frand;
         unsigned char session_id32[32];
@@ -73,6 +76,36 @@ int sign(const secp256k1_context* ctx, unsigned char seckeys[][32], const secp25
             return 0;
         }
         nonce_commitment_ptr[i] = &nonce_commitment[i][0];
+        
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", session_id32[j]);
+        }
+        printf("\",\n");
+    }
+    printf("],\n\"commitments\": [\n");
+    for (i = 0; i < N_SIGNERS; i++) {
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", nonce_commitment[i][j]);
+        }
+        printf("\",\n");
+    }
+    printf("],\n\"secretKeys\": [\n");
+    for (i = 0; i < N_SIGNERS; i++) {
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", musig_session[i].seckey[j]);
+        }
+        printf("\",\n");
+    }
+    printf("],\n\"secretNonces\": [\n");
+    for (i = 0; i < N_SIGNERS; i++) {
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", musig_session[i].secnonce[j]);
+        }
+        printf("\",\n");
     }
     /* Communication round 1: Exchange nonce commitments */
     for (i = 0; i < N_SIGNERS; i++) {
@@ -94,12 +127,29 @@ int sign(const secp256k1_context* ctx, unsigned char seckeys[][32], const secp25
         if (!secp256k1_musig_session_combine_nonces(ctx, &musig_session[i], signer_data[i], N_SIGNERS, NULL, NULL)) {
             return 0;
         }
+        if (i == 0) {
+            printf("],\n\"nonceCombined\": \"");
+            if (!secp256k1_ec_pubkey_serialize(ctx, pkser, &pkserlen, &musig_session[i].combined_nonce, SECP256K1_EC_COMPRESSED)) {
+                return 0;
+            }
+            for (j = 0; j < pkserlen; j++) {
+                printf("%02x", pkser[j]);
+            }
+            printf("\",\n");
+        }
     }
+    printf("\"partialSigs\": [\n");
     for (i = 0; i < N_SIGNERS; i++) {
         if (!secp256k1_musig_partial_sign(ctx, &musig_session[i], &partial_sig[i])) {
             return 0;
         }
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", partial_sig[i].data[j]);
+        }
+        printf("\",\n");
     }
+    printf("],\n");
     /* Communication round 3: Exchange partial signatures */
     for (i = 0; i < N_SIGNERS; i++) {
         for (j = 0; j < N_SIGNERS; j++) {
@@ -125,40 +175,80 @@ int sign(const secp256k1_context* ctx, unsigned char seckeys[][32], const secp25
  int main(void) {
     secp256k1_context* ctx;
     int i;
+    unsigned int j;
     unsigned char seckeys[N_SIGNERS][32];
     secp256k1_pubkey pubkeys[N_SIGNERS];
     secp256k1_pubkey combined_pk;
     unsigned char msg[32] = "this_could_be_the_hash_of_a_msg!";
     secp256k1_schnorrsig sig;
+    unsigned char pkser[33];
+    size_t pkserlen = sizeof(pkser);
+    unsigned char sigser[64];
+    size_t sigserlen = sizeof(sigser);
 
     /* Create a context for signing and verification */
     ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    printf("Creating key pairs......");
+    printf("{\n");
     for (i = 0; i < N_SIGNERS; i++) {
         if (!create_key(ctx, seckeys[i], &pubkeys[i])) {
             printf("FAILED\n");
             return 1;
         }
     }
-    printf("ok\n");
-    printf("Combining public keys...");
+    printf("\n\"pubKeys\": [\n");
+    for (i = 0; i < N_SIGNERS; i++) {
+        if (!secp256k1_ec_pubkey_serialize(ctx, pkser, &pkserlen, &pubkeys[i], SECP256K1_EC_COMPRESSED)) {
+            return 0;
+        }
+        printf("  \"");
+        for (j = 0; j < pkserlen; j++) {
+            printf("%02x", pkser[j]);
+        }
+        printf("\",\n");
+    }
+    printf("],\n\"privKeys\":[\n");
+    for (i = 0; i < N_SIGNERS; i++) {
+        printf("  \"");
+        for (j = 0; j < 32; j++) {
+            printf("%02x", seckeys[i][j]);
+        }
+        printf("\",\n");
+    }
+    printf("],\n");
     if (!secp256k1_musig_pubkey_combine(ctx, NULL, &combined_pk, NULL, pubkeys, N_SIGNERS)) {
         printf("FAILED\n");
         return 1;
     }
-    printf("ok\n");
-    printf("Signing message.........");
+    if (!secp256k1_ec_pubkey_serialize(ctx, pkser, &pkserlen, &combined_pk, SECP256K1_EC_COMPRESSED)) {
+        return 0;
+    }
+    printf("\"pubKeyCombined\": \"");
+    for (j = 0; j < pkserlen; j++) {
+        printf("%02x", pkser[j]);
+    }
+    printf("\",\n");
+    
+    printf("\"message\": \"");
+    for (j = 0; j < 32; j++) {
+        printf("%02x", msg[j]);
+    }
+    printf("\",\n");
     if (!sign(ctx, seckeys, pubkeys, msg, &sig)) {
         printf("FAILED\n");
         return 1;
     }
-    printf("ok\n");
-    printf("Verifying signature.....");
+    if (!secp256k1_schnorrsig_serialize(ctx, sigser, &sig)) {
+        return 0;
+    }
+    printf("\"signature\": \"");
+    for (j = 0; j < sigserlen; j++) {
+        printf("%02x", sigser[j]);
+    }
+    printf("\"\n},\n");
     if (!secp256k1_schnorrsig_verify(ctx, &sig, msg, &combined_pk)) {
         printf("FAILED\n");
         return 1;
     }
-    printf("ok\n");
     secp256k1_context_destroy(ctx);
     return 0;
 }
